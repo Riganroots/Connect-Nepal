@@ -1,0 +1,6 @@
+{
+  "name": "Connect",
+  "description": "Helping people discover things to do and connect with people who want to do them together.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
