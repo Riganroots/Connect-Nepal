@@ -10,10 +10,18 @@ import com.example.data.database.AppDatabase
 import com.example.data.model.*
 import com.example.data.repository.ConnectRepository
 import com.example.data.repository.InterestsRepository
+import com.example.data.security.PasswordHasher
+import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
+import com.google.firebase.ai.ai
+import com.google.firebase.ai.type.GenerativeBackend
+import com.google.firebase.ai.type.content
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
-import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import kotlinx.coroutines.withContext
 
 class ConnectViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -343,20 +351,23 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                 onComplete(false)
                 return@launch
             }
-            val user = database.connectDao().getUserByEmail(email)
+            val user = database.connectDao().getUserByEmail(normalizeEmail(email))
             if (user != null) {
-                if (user.password == password) {
+                val passwordMatches = withContext(Dispatchers.Default) {
+                    PasswordHasher.verify(password, user.password)
+                }
+                if (passwordMatches) {
                     database.connectDao().clearCurrentUser()
                     database.connectDao().updateUser(user.copy(isCurrentUser = true))
                     _isOnboarded.value = true
                     sharedPrefs.edit().putBoolean("is_onboarded", true).apply()
                     onComplete(true)
                 } else {
-                    _loginError.value = "Incorrect password"
+                    _loginError.value = "Incorrect email or password"
                     onComplete(false)
                 }
             } else {
-                _loginError.value = "No user found with this email"
+                _loginError.value = "Incorrect email or password"
                 onComplete(false)
             }
         }
@@ -378,15 +389,27 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                 onComplete(false)
                 return@launch
             }
-            val existing = database.connectDao().getUserByEmail(email)
+            val normalizedEmail = normalizeEmail(email)
+            if (!android.util.Patterns.EMAIL_ADDRESS.matcher(normalizedEmail).matches()) {
+                _loginError.value = "Please enter a valid email address"
+                onComplete(false)
+                return@launch
+            }
+            if (password.length < MIN_PASSWORD_LENGTH) {
+                _loginError.value = "Password must be at least $MIN_PASSWORD_LENGTH characters"
+                onComplete(false)
+                return@launch
+            }
+            val existing = database.connectDao().getUserByEmail(normalizedEmail)
             if (existing != null) {
                 _loginError.value = "A user with this email already exists"
                 onComplete(false)
                 return@launch
             }
+            val passwordHash = withContext(Dispatchers.Default) { PasswordHasher.hash(password) }
             database.connectDao().clearCurrentUser()
             val newUser = UserEntity(
-                name = name,
+                name = name.trim(),
                 bio = bio.ifBlank { "Excited to meet new people!" },
                 profilePictureUrl = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200", // Beautiful default avatar
                 city = city.ifBlank { "Kathmandu" },
@@ -394,8 +417,8 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                 followersCount = 0,
                 followingCount = 0,
                 isCurrentUser = true,
-                email = email,
-                password = password
+                email = normalizedEmail,
+                password = passwordHash
             )
             database.connectDao().insertUser(newUser)
             _isOnboarded.value = true
@@ -403,6 +426,8 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
             onComplete(true)
         }
     }
+
+    private fun normalizeEmail(email: String): String = email.trim().lowercase()
 
     fun logout() {
         viewModelScope.launch {
@@ -468,75 +493,24 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
         viewModelScope.launch {
             try {
-                val apiKey = com.example.BuildConfig.GEMINI_API_KEY
-                if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
-                    _aiMessages.value = _aiMessages.value + Pair("Guide: I don't have a valid Gemini API key configured. Please set GEMINI_API_KEY in the Secrets panel of AI Studio.", false)
-                    _isAiLoading.value = false
+                // Gemini is called through Firebase AI Logic so no API key ships inside the APK.
+                // This needs the app registered in Firebase (google-services.json) with AI Logic enabled.
+                if (FirebaseApp.getApps(getApplication<Application>()).isEmpty()) {
+                    _aiMessages.value = _aiMessages.value + Pair("The AI guide isn't available in this build yet. Please try again in a later update.", false)
                     return@launch
                 }
-
-                // Call Gemini API using Direct REST client or simple HTTP request via OkHttp
-                val mediaType = "application/json; charset=utf-8".toMediaTypeOrNull()
-                
-                // Construct clean prompt & system instruction payload
-                val systemInstruction = "You are a professional, helpful and friendly local guide for Kathmandu and Nepal. " +
-                        "Provide direct, highly relevant, and visually structured local recommendations. Use clean spacing and bullet points."
-                
-                val jsonBody = """
-                    {
-                      "contents": [
-                        {
-                          "parts": [
-                            {
-                              "text": ${org.json.JSONObject.quote(prompt)}
-                            }
-                          ]
-                        }
-                      ],
-                      "systemInstruction": {
-                        "parts": [
-                          {
-                            "text": ${org.json.JSONObject.quote(systemInstruction)}
-                          }
-                        ]
-                      }
-                    }
-                """.trimIndent()
-
-                val okHttpClient = okhttp3.OkHttpClient.Builder()
-                    .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                    .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                    .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
-                    .build()
-
-                val request = okhttp3.Request.Builder()
-                    .url("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=$apiKey")
-                    .post(okhttp3.RequestBody.create(mediaType, jsonBody))
-                    .build()
-
-                // Execute asynchronously
-                val response = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    okHttpClient.newCall(request).execute()
-                }
-
-                if (response.isSuccessful) {
-                    val responseBody = response.body?.string()
-                    if (responseBody != null) {
-                        val jsonObject = org.json.JSONObject(responseBody)
-                        val candidates = jsonObject.optJSONArray("candidates")
-                        val firstCandidate = candidates?.optJSONObject(0)
-                        val content = firstCandidate?.optJSONObject("content")
-                        val parts = content?.optJSONArray("parts")
-                        val text = parts?.optJSONObject(0)?.optString("text") ?: "Sorry, I couldn't understand that response."
-                        _aiMessages.value = _aiMessages.value + Pair(text, false)
-                    } else {
-                        _aiMessages.value = _aiMessages.value + Pair("Error: Empty response from AI guide.", false)
-                    }
-                } else {
-                    _aiMessages.value = _aiMessages.value + Pair("Error: Server returned code ${response.code}", false)
-                }
+                val model = Firebase.ai(backend = GenerativeBackend.googleAI()).generativeModel(
+                    modelName = AI_GUIDE_MODEL,
+                    systemInstruction = content { text(AI_GUIDE_SYSTEM_INSTRUCTION) }
+                )
+                val response = model.generateContent(prompt)
+                val text = response.text?.takeIf { it.isNotBlank() } ?: "Sorry, I couldn't understand that response."
+                _aiMessages.value = _aiMessages.value + Pair(text, false)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _aiMessages.value = _aiMessages.value + Pair("Error contacting guide: ${e.message}", false)
+                android.util.Log.e("ConnectViewModel", "AI guide request failed", e)
+                _aiMessages.value = _aiMessages.value + Pair("Sorry, I couldn't reach the guide right now. Please check your connection and try again.", false)
             } finally {
                 _isAiLoading.value = false
             }
@@ -544,15 +518,22 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // --- Block & Report States ---
-    private val _blockedUserIds = MutableStateFlow<Set<Int>>(emptySet())
+    private val _blockedUserIds = MutableStateFlow(
+        sharedPrefs.getStringSet("blocked_user_ids", emptySet()).orEmpty().mapNotNull { it.toIntOrNull() }.toSet()
+    )
     val blockedUserIds: StateFlow<Set<Int>> = _blockedUserIds.asStateFlow()
 
     fun blockUser(userId: Int) {
-        _blockedUserIds.value = _blockedUserIds.value + userId
+        updateBlockedUsers(_blockedUserIds.value + userId)
     }
 
     fun unblockUser(userId: Int) {
-        _blockedUserIds.value = _blockedUserIds.value - userId
+        updateBlockedUsers(_blockedUserIds.value - userId)
+    }
+
+    private fun updateBlockedUsers(ids: Set<Int>) {
+        _blockedUserIds.value = ids
+        sharedPrefs.edit().putStringSet("blocked_user_ids", ids.map { it.toString() }.toSet()).apply()
     }
 
     private val _reportedUsers = MutableStateFlow<Map<Int, String>>(emptyMap()) // UserId -> Reason
@@ -562,6 +543,14 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         _reportedUsers.value = _reportedUsers.value + (userId to reason)
     }
 }
+
+private const val MIN_PASSWORD_LENGTH = 8
+
+private const val AI_GUIDE_MODEL = "gemini-3.5-flash"
+
+private const val AI_GUIDE_SYSTEM_INSTRUCTION =
+    "You are a professional, helpful and friendly local guide for Kathmandu and Nepal. " +
+        "Provide direct, highly relevant, and visually structured local recommendations. Use clean spacing and bullet points."
 
 class ConnectViewModelFactory(private val application: Application) : ViewModelProvider.Factory {
     override fun <T : ViewModel> create(modelClass: Class<T>): T {

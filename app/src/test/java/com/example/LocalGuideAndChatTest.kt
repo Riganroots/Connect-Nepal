@@ -44,6 +44,14 @@ class LocalGuideAndChatTest {
     }
 
     @Test
+    fun blockedUsersSurviveViewModelRecreation() = runBlocking {
+        viewModel.blockUser(42)
+
+        val recreated = ConnectViewModel(application)
+        assertTrue(recreated.blockedUserIds.value.contains(42))
+    }
+
+    @Test
     fun testReportUser() = runBlocking {
         // Initially empty
         var reports = viewModel.reportedUsers.value

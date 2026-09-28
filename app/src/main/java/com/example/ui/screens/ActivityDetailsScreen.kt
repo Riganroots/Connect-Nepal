@@ -224,7 +224,7 @@ fun ActivityDetailsScreen(
                                         About this activity:
                                         ${act.description}
                                         
-                                        Shared via Connect App
+                                        Shared via Connect Nepal
                                     """.trimIndent()
                                     putExtra(Intent.EXTRA_TEXT, shareText)
                                 }
