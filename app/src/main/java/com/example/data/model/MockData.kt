@@ -2,6 +2,9 @@ package com.example.data.model
 
 object MockData {
 
+    /** Password for the seeded demo accounts. Only usable in debug builds; see AppDatabase. */
+    const val DEMO_PASSWORD = "password123"
+
     val cities = listOf(
         "Kathmandu",
         "Pokhara",
@@ -24,8 +27,7 @@ object MockData {
         followersCount = 142,
         followingCount = 98,
         isCurrentUser = false,
-        email = "ayush@connect.com",
-        password = "password123"
+        email = "ayush@connect.com"
     )
 
     val initialUsers = listOf(
@@ -38,8 +40,7 @@ object MockData {
             interests = "Trekking, Camping, Photography, Cycling",
             followersCount = 310,
             followingCount = 180,
-            email = "sagar@connect.com",
-            password = "password123"
+            email = "sagar@connect.com"
         ),
         UserEntity(
             id = 3,
@@ -50,8 +51,7 @@ object MockData {
             interests = "Street Food, Desserts, Cafés, Heritage",
             followersCount = 520,
             followingCount = 340,
-            email = "prerana@connect.com",
-            password = "password123"
+            email = "prerana@connect.com"
         ),
         UserEntity(
             id = 4,
@@ -62,8 +62,7 @@ object MockData {
             interests = "Heritage, Pottery, Walks, Desserts",
             followersCount = 195,
             followingCount = 120,
-            email = "rohan@connect.com",
-            password = "password123"
+            email = "rohan@connect.com"
         ),
         UserEntity(
             id = 5,
@@ -74,8 +73,7 @@ object MockData {
             interests = "Nature Trips, Camping, Walks, Volunteering",
             followersCount = 280,
             followingCount = 145,
-            email = "neha@connect.com",
-            password = "password123"
+            email = "neha@connect.com"
         ),
         UserEntity(
             id = 6,
@@ -86,8 +84,7 @@ object MockData {
             interests = "Football, Cricket, Gym Meetups, Cycling",
             followersCount = 210,
             followingCount = 115,
-            email = "nischal@connect.com",
-            password = "password123"
+            email = "nischal@connect.com"
         )
     )
 

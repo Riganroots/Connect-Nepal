@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - "codex/**"
+      - "claude/**"
   pull_request:
     branches:
       - main
@@ -50,10 +51,21 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --stacktrace
 
+      - name: Build release bundle
+        run: ./gradlew bundleRelease --stacktrace
+
       - name: Upload debug APK
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: connect-nepal-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload release bundle
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: connect-nepal-release-aab
+          path: app/build/outputs/bundle/release/*.aab
           if-no-files-found: error

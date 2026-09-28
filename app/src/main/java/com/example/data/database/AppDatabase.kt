@@ -5,7 +5,9 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.sqlite.db.SupportSQLiteDatabase
+import com.example.BuildConfig
 import com.example.data.model.*
+import com.example.data.security.PasswordHasher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -18,7 +20,7 @@ import kotlinx.coroutines.launch
         MessageEntity::class,
         UserInterest::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -54,13 +56,17 @@ abstract class AppDatabase : RoomDatabase() {
             INSTANCE?.let { database ->
                 scope.launch(Dispatchers.IO) {
                     val dao = database.connectDao()
-                    
+
+                    // Sample accounts can only be logged into on debug builds; release builds
+                    // store a blank password hash, which PasswordHasher.verify always rejects.
+                    val seedPasswordHash = if (BuildConfig.DEBUG) PasswordHasher.hash(MockData.DEMO_PASSWORD) else ""
+
                     // Insert current user
-                    dao.insertUser(MockData.currentUser)
-                    
+                    dao.insertUser(MockData.currentUser.copy(password = seedPasswordHash))
+
                     // Insert initial users
                     MockData.initialUsers.forEach { user ->
-                        dao.insertUser(user)
+                        dao.insertUser(user.copy(password = seedPasswordHash))
                     }
 
                     // Insert initial activities

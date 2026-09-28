@@ -1,5 +1,9 @@
 package com.example.ui.screens
 
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,6 +24,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.BuildConfig
 import com.example.data.model.MockData
 import com.example.ui.viewmodel.ConnectViewModel
 
@@ -249,121 +254,124 @@ fun SettingsScreen(
                 }
             }
 
-            // Section 3: Privacy & Self-Serve Credentials (OAuth & Maps)
-            Text(
-                text = "Privacy & Self-Serve Credentials",
-                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.primary
-            )
+            // Section 3: developer-only map & OAuth overrides. Hidden in release builds so beta
+            // testers are never asked to paste API keys or OAuth client IDs.
+            if (BuildConfig.DEBUG) {
+                Text(
+                    text = "Privacy & Self-Serve Credentials",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    color = MaterialTheme.colorScheme.primary
+                )
 
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Text(
-                        text = "Take complete control of your data. Configure your own API keys and enable decentralized authentication.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Text(
+                            text = "Take complete control of your data. Configure your own API keys and enable decentralized authentication.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
 
-                    // Map Engine Selection
-                    var mapMenuExpanded by remember { mutableStateOf(false) }
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { mapMenuExpanded = true }
-                            .padding(vertical = 8.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.Map, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column {
-                                Text("Real Map Engine", fontWeight = FontWeight.Bold)
-                                Text("Map visualization style", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                        // Map Engine Selection
+                        var mapMenuExpanded by remember { mutableStateOf(false) }
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { mapMenuExpanded = true }
+                                .padding(vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.Map, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column {
+                                    Text("Real Map Engine", fontWeight = FontWeight.Bold)
+                                    Text("Map visualization style", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
+                                }
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(text = mapSource, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
+                                Icon(Icons.Default.ArrowDropDown, contentDescription = null)
                             }
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(text = mapSource, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold), color = MaterialTheme.colorScheme.primary)
-                            Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                        }
-                    }
 
-                    DropdownMenu(
-                        expanded = mapMenuExpanded,
-                        onDismissRequest = { mapMenuExpanded = false }
-                    ) {
-                        listOf("Vector Canvas (Offline)", "OpenStreetMap (Real)", "Google Maps (Self-Serve)").forEach { source ->
-                            DropdownMenuItem(
-                                text = { Text(source) },
-                                onClick = {
-                                    viewModel.updateMapSource(source)
-                                    mapMenuExpanded = false
+                        DropdownMenu(
+                            expanded = mapMenuExpanded,
+                            onDismissRequest = { mapMenuExpanded = false }
+                        ) {
+                            listOf("Vector Canvas (Offline)", "OpenStreetMap (Real)", "Google Maps (Self-Serve)").forEach { source ->
+                                DropdownMenuItem(
+                                    text = { Text(source) },
+                                    onClick = {
+                                        viewModel.updateMapSource(source)
+                                        mapMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                        // Google Maps API Key Input (if Google Maps selected)
+                        if (mapSource == "Google Maps (Self-Serve)") {
+                            OutlinedTextField(
+                                value = googleMapsApiKey,
+                                onValueChange = { viewModel.updateGoogleMapsApiKey(it) },
+                                label = { Text("Self-Serve Google Maps API Key") },
+                                placeholder = { Text("AIzaSy...") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("google_maps_api_key_input")
+                            )
+                            Text(
+                                text = "Used exclusively client-side on your device to query real-time geographical data.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                        }
+
+                        // Manual Google OAuth Client ID
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.VpnKey, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                                Spacer(modifier = Modifier.width(16.dp))
+                                Column {
+                                    Text("Enable Manual OAuth", fontWeight = FontWeight.Bold)
+                                    Text("Authenticate with your own keys", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                                 }
+                            }
+                            Switch(
+                                checked = manualOAuthEnabled,
+                                onCheckedChange = { viewModel.toggleManualOAuth(it) },
+                                modifier = Modifier.testTag("manual_oauth_switch")
                             )
                         }
-                    }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    // Google Maps API Key Input (if Google Maps selected)
-                    if (mapSource == "Google Maps (Self-Serve)") {
-                        OutlinedTextField(
-                            value = googleMapsApiKey,
-                            onValueChange = { viewModel.updateGoogleMapsApiKey(it) },
-                            label = { Text("Self-Serve Google Maps API Key") },
-                            placeholder = { Text("AIzaSy...") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().testTag("google_maps_api_key_input")
-                        )
-                        Text(
-                            text = "Used exclusively client-side on your device to query real-time geographical data.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                    }
-
-                    // Manual Google OAuth Client ID
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.VpnKey, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            Spacer(modifier = Modifier.width(16.dp))
-                            Column {
-                                Text("Enable Manual OAuth", fontWeight = FontWeight.Bold)
-                                Text("Authenticate with your own keys", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
-                            }
+                        if (manualOAuthEnabled) {
+                            OutlinedTextField(
+                                value = googleClientId,
+                                onValueChange = { viewModel.updateGoogleClientId(it) },
+                                label = { Text("Your Google Client ID") },
+                                placeholder = { Text("123456-abcdef.apps.googleusercontent.com") },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth().testTag("google_client_id_input")
+                            )
+                            Text(
+                                text = "Authenticates you directly with Google identity servers. We never store or see your OAuth credentials.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                            )
                         }
-                        Switch(
-                            checked = manualOAuthEnabled,
-                            onCheckedChange = { viewModel.toggleManualOAuth(it) },
-                            modifier = Modifier.testTag("manual_oauth_switch")
-                        )
-                    }
-
-                    if (manualOAuthEnabled) {
-                        OutlinedTextField(
-                            value = googleClientId,
-                            onValueChange = { viewModel.updateGoogleClientId(it) },
-                            label = { Text("Your Google Client ID") },
-                            placeholder = { Text("123456-abcdef.apps.googleusercontent.com") },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth().testTag("google_client_id_input")
-                        )
-                        Text(
-                            text = "Authenticates you directly with Google identity servers. We never store or see your OAuth credentials.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                        )
                     }
                 }
             }
@@ -408,9 +416,43 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(30.dp))
 
+            // Beta feedback
+            if (BuildConfig.FEEDBACK_EMAIL.isNotBlank()) {
+                OutlinedButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_SENDTO).apply {
+                            data = Uri.parse("mailto:")
+                            putExtra(Intent.EXTRA_EMAIL, arrayOf(BuildConfig.FEEDBACK_EMAIL))
+                            putExtra(
+                                Intent.EXTRA_SUBJECT,
+                                "Connect Nepal beta feedback (v${BuildConfig.VERSION_NAME})"
+                            )
+                            putExtra(
+                                Intent.EXTRA_TEXT,
+                                "\n\n---\nApp version: ${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})\n" +
+                                    "Device: ${Build.MANUFACTURER} ${Build.MODEL}, Android ${Build.VERSION.RELEASE}"
+                            )
+                        }
+                        try {
+                            context.startActivity(intent)
+                        } catch (e: ActivityNotFoundException) {
+                            Toast.makeText(context, "No email app found. Write to ${BuildConfig.FEEDBACK_EMAIL}", Toast.LENGTH_LONG).show()
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("beta_feedback_button"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.Feedback, contentDescription = null)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Send Beta Feedback")
+                }
+            }
+
             // Build Info
             Text(
-                text = "Connect V1.0.0 (MVP) • Made in Nepal",
+                text = "Connect Nepal v${BuildConfig.VERSION_NAME} • Made in Nepal",
                 fontSize = 11.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.4f),

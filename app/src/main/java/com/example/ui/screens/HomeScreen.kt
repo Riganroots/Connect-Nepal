@@ -1434,7 +1434,7 @@ fun ActivityCard(
                                     About this activity:
                                     ${activity.description}
                                     
-                                    Shared via Connect App
+                                    Shared via Connect Nepal
                                  """.trimIndent()
                                 putExtra(Intent.EXTRA_TEXT, shareText)
                             }

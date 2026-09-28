@@ -30,6 +30,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.BuildConfig
 import com.example.data.model.MockData
 import com.example.ui.viewmodel.ConnectViewModel
 
@@ -106,13 +107,25 @@ fun AuthScreen(
                         modifier = Modifier.size(56.dp)
                     )
                     Spacer(modifier = Modifier.height(8.dp))
-                    Text(
-                        text = "Connect",
-                        fontSize = 32.sp,
-                        fontWeight = FontWeight.Black,
-                        color = Color.White,
-                        letterSpacing = 1.sp
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Connect Nepal",
+                            fontSize = 28.sp,
+                            fontWeight = FontWeight.Black,
+                            color = Color.White,
+                            letterSpacing = 1.sp
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "BETA",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier
+                                .background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                     Text(
                         text = "Discover & join activities near you",
                         fontSize = 14.sp,
@@ -302,41 +315,43 @@ fun AuthScreen(
                             }
                         }
 
-                        // Demo Account Fast Access
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Text(
-                            text = "Or quick login with a demo account:",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.fillMaxWidth()
-                        )
+                        // Demo account fast access (debug builds only; demo accounts are locked in release)
+                        if (BuildConfig.DEBUG) {
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = "Or quick login with a demo account:",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            )
 
-                        Button(
-                            onClick = {
-                                email = "ayush@connect.com"
-                                password = "password123"
-                                isLoading = true
-                                viewModel.login("ayush@connect.com", "password123") { success ->
-                                    isLoading = false
-                                    if (success) {
-                                        onAuthSuccess()
+                            Button(
+                                onClick = {
+                                    email = MockData.currentUser.email
+                                    password = MockData.DEMO_PASSWORD
+                                    isLoading = true
+                                    viewModel.login(MockData.currentUser.email, MockData.DEMO_PASSWORD) { success ->
+                                        isLoading = false
+                                        if (success) {
+                                            onAuthSuccess()
+                                        }
                                     }
-                                }
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                            ),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("quick_login_button"),
-                            shape = RoundedCornerShape(24.dp)
-                        ) {
-                            Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Ayush Karki (Demo)", fontWeight = FontWeight.Bold)
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(48.dp)
+                                    .testTag("quick_login_button"),
+                                shape = RoundedCornerShape(24.dp)
+                            ) {
+                                Icon(Icons.Default.VerifiedUser, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("${MockData.currentUser.name} (Demo)", fontWeight = FontWeight.Bold)
+                            }
                         }
 
                     } else {

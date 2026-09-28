@@ -15,7 +15,7 @@ data class UserEntity(
     val followingCount: Int,
     val isCurrentUser: Boolean = false,
     val email: String = "",
-    val password: String = ""
+    val password: String = "" // PBKDF2 hash from PasswordHasher, never plaintext
 )
 
 @Entity(tableName = "activities")
