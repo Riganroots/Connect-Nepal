@@ -15,7 +15,7 @@ class PasswordHasherTest {
     fun hashIsNotPlaintextAndVerifies() {
         val hash = PasswordHasher.hash("correct horse")
         assertFalse(hash.contains("correct horse"))
-        assertTrue(hash.startsWith("pbkdf2-sha256$"))
+        assertTrue(hash.startsWith("pbkdf2-sha256\$"))
         assertTrue(PasswordHasher.verify("correct horse", hash))
     }
 
@@ -35,6 +35,6 @@ class PasswordHasherTest {
         assertFalse(PasswordHasher.verify("", ""))
         assertFalse(PasswordHasher.verify("password123", ""))
         assertFalse(PasswordHasher.verify("password123", "password123"))
-        assertFalse(PasswordHasher.verify("password123", "pbkdf2-md5$1$AAAA$AAAA"))
+        assertFalse(PasswordHasher.verify("password123", "pbkdf2-md5\$1\$AAAA\$AAAA"))
     }
 }
