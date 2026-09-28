@@ -32,15 +32,17 @@ class ConnectRepositoryTest {
     private val joiner = user(id = 2, name = "Joiner")
 
     @Before
-    fun createDb() = runBlocking {
+    fun createDb() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
         dao = db.connectDao()
         repository = ConnectRepository(dao, cloud = null)
-        dao.insertUser(organizer)
-        dao.insertUser(joiner)
+        runBlocking {
+            dao.insertUser(organizer)
+            dao.insertUser(joiner)
+        }
     }
 
     @After
