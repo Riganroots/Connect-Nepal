@@ -7,7 +7,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
 import com.example.data.model.ActivityEntity
-import com.example.data.model.MockData
+import com.example.data.repository.CloudRepository
 import com.example.data.repository.ConnectRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.*
@@ -71,7 +71,10 @@ data class HomeParams(
 class HomeBloc(application: Application) : AndroidViewModel(application) {
 
     private val database = AppDatabase.getDatabase(application, viewModelScope)
-    private val repository = ConnectRepository(database.connectDao())
+    private val repository = ConnectRepository(
+        database.connectDao(),
+        CloudRepository.createIfConfigured(application, database.connectDao())
+    )
 
     // Category selection event pipeline
     private val _selectedCategory = MutableStateFlow<String?>(null)
@@ -180,18 +183,13 @@ class HomeBloc(application: Application) : AndroidViewModel(application) {
                     repository.toggleSaveActivity(event.activityId)
                 }
                 is HomeEvent.ToggleJoin -> {
-                    if (event.isAlreadyJoined) {
-                        getCurrentUser()?.id?.let { userId ->
-                            repository.leaveActivity(event.activityId, userId)
+                    val user = getCurrentUser()
+                    if (user != null) {
+                        if (event.isAlreadyJoined) {
+                            repository.leaveActivity(event.activityId, user)
+                        } else {
+                            repository.joinActivity(event.activityId, user)
                         }
-                    } else {
-                        val user = getCurrentUser() ?: MockData.currentUser
-                        repository.joinActivity(
-                            activityId = event.activityId,
-                            userId = user.id,
-                            userName = user.name,
-                            userAvatar = user.profilePictureUrl
-                        )
                     }
                 }
                 is HomeEvent.ChangeCity -> {

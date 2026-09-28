@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.example.data.database.AppDatabase
 import com.example.data.model.*
+import com.example.data.repository.CloudRepository
 import com.example.data.repository.ConnectRepository
 import com.example.data.repository.InterestsRepository
 import com.example.data.security.PasswordHasher
@@ -16,6 +17,8 @@ import com.google.firebase.FirebaseApp
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.GenerativeBackend
 import com.google.firebase.ai.type.content
+import com.google.firebase.auth.FirebaseAuthException
+import com.google.firebase.FirebaseNetworkException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -27,8 +30,12 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
     private val sharedPrefs = application.getSharedPreferences("connect_prefs", Context.MODE_PRIVATE)
     private val database = AppDatabase.getDatabase(application, viewModelScope)
-    private val repository = ConnectRepository(database.connectDao())
+    private val cloud = CloudRepository.createIfConfigured(application, database.connectDao())
+    private val repository = ConnectRepository(database.connectDao(), cloud)
     private val interestsRepository = InterestsRepository(database.connectDao())
+
+    /** True when Firebase is configured, so accounts, activities and chats are shared online. */
+    val isCloudEnabled: Boolean = cloud != null
 
     // UI Configuration States
     private val _isDarkMode = MutableStateFlow(sharedPrefs.getBoolean("dark_mode", false))
@@ -66,6 +73,31 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = null
     )
+
+    init {
+        cloud?.let { c ->
+            viewModelScope.launch {
+                // Keep Room's signed-in user consistent with Firebase Auth, e.g. after the app's
+                // data is restored onto a new device or a local-only account from an older build.
+                val dao = database.connectDao()
+                val localUser = dao.getCurrentUser().first()
+                if (localUser != null && (localUser.remoteId == null || localUser.remoteId != c.currentUid)) {
+                    c.signOut()
+                    dao.clearCurrentUser()
+                    resetOnboarding()
+                }
+            }
+            viewModelScope.launch {
+                // Mirror shared activities into Room while someone is signed in.
+                repository.currentUser
+                    .map { it?.remoteId }
+                    .distinctUntilChanged()
+                    .collectLatest { remoteId ->
+                        if (remoteId != null && remoteId == c.currentUid) c.syncActivities()
+                    }
+            }
+        }
+    }
 
     // Current City - Derived from user profile, falls back to preferences
     val currentCity: StateFlow<String> = currentUser
@@ -243,12 +275,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
     fun joinActivity(activityId: Int) {
         viewModelScope.launch {
             currentUser.value?.let { user ->
-                repository.joinActivity(
-                    activityId = activityId,
-                    userId = user.id,
-                    userName = user.name,
-                    userAvatar = user.profilePictureUrl
-                )
+                repository.joinActivity(activityId, user)
             }
         }
     }
@@ -256,7 +283,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
     fun leaveActivity(activityId: Int) {
         viewModelScope.launch {
             currentUser.value?.let { user ->
-                repository.leaveActivity(activityId, user.id)
+                repository.leaveActivity(activityId, user)
             }
         }
     }
@@ -277,13 +304,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
     fun sendChatMessage(activityId: Int, text: String) {
         viewModelScope.launch {
             currentUser.value?.let { user ->
-                repository.sendMessage(
-                    activityId = activityId,
-                    senderId = user.id,
-                    senderName = user.name,
-                    senderAvatar = user.profilePictureUrl,
-                    text = text
-                )
+                repository.sendMessage(activityId, user, text)
             }
         }
     }
@@ -304,7 +325,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
         coverImageUrl: String
     ) {
         viewModelScope.launch {
-            val user = currentUser.value ?: MockData.currentUser
+            val user = currentUser.value ?: return@launch
             val newAct = ActivityEntity(
                 title = title,
                 description = description,
@@ -336,7 +357,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                 participantCount = 1,
                 isJoined = true
             )
-            repository.insertActivity(newAct)
+            repository.createActivity(newAct, user)
         }
     }
 
@@ -349,6 +370,16 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
             if (email.isBlank() || password.isBlank()) {
                 _loginError.value = "Email and password cannot be empty"
                 onComplete(false)
+                return@launch
+            }
+            if (cloud != null) {
+                val error = runCloudAuth { cloud.signIn(normalizeEmail(email), password) }
+                if (error == null) {
+                    _isOnboarded.value = true
+                    sharedPrefs.edit().putBoolean("is_onboarded", true).apply()
+                }
+                _loginError.value = error
+                onComplete(error == null)
                 return@launch
             }
             val user = database.connectDao().getUserByEmail(normalizeEmail(email))
@@ -400,6 +431,27 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
                 onComplete(false)
                 return@launch
             }
+            if (cloud != null) {
+                val error = runCloudAuth {
+                    cloud.signUp(
+                        name = name.trim(),
+                        email = normalizedEmail,
+                        password = password,
+                        city = city.ifBlank { "Kathmandu" },
+                        bio = bio.ifBlank { "Excited to meet new people!" },
+                        interests = interests.ifBlank { "Meetups, Outdoors, Cafés" }
+                            .split(",").map { it.trim() }.filter { it.isNotEmpty() },
+                        profilePictureUrl = DEFAULT_AVATAR_URL
+                    )
+                }
+                if (error == null) {
+                    _isOnboarded.value = true
+                    sharedPrefs.edit().putBoolean("is_onboarded", true).apply()
+                }
+                _loginError.value = error
+                onComplete(error == null)
+                return@launch
+            }
             val existing = database.connectDao().getUserByEmail(normalizedEmail)
             if (existing != null) {
                 _loginError.value = "A user with this email already exists"
@@ -411,7 +463,7 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
             val newUser = UserEntity(
                 name = name.trim(),
                 bio = bio.ifBlank { "Excited to meet new people!" },
-                profilePictureUrl = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200", // Beautiful default avatar
+                profilePictureUrl = DEFAULT_AVATAR_URL,
                 city = city.ifBlank { "Kathmandu" },
                 interests = interests.ifBlank { "Meetups, Outdoors, Cafés" },
                 followersCount = 0,
@@ -429,15 +481,80 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
     private fun normalizeEmail(email: String): String = email.trim().lowercase()
 
+    /** Runs a Firebase Auth call and returns a user-facing error message, or null on success. */
+    private suspend fun runCloudAuth(block: suspend () -> Unit): String? = try {
+        block()
+        null
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: FirebaseNetworkException) {
+        "No internet connection. Please try again."
+    } catch (e: FirebaseAuthException) {
+        when (e.errorCode) {
+            "ERROR_EMAIL_ALREADY_IN_USE" -> "A user with this email already exists"
+            "ERROR_WEAK_PASSWORD" -> "Please choose a stronger password"
+            "ERROR_INVALID_EMAIL" -> "Please enter a valid email address"
+            "ERROR_TOO_MANY_REQUESTS" -> "Too many attempts. Please wait a moment and try again."
+            "ERROR_USER_DISABLED" -> "This account has been disabled"
+            else -> "Incorrect email or password"
+        }
+    } catch (e: Exception) {
+        android.util.Log.e("ConnectViewModel", "Authentication failed", e)
+        "Something went wrong. Please try again."
+    }
+
     fun logout() {
         viewModelScope.launch {
+            cloud?.signOut()
             database.connectDao().clearCurrentUser()
             resetOnboarding()
         }
     }
 
+    /**
+     * Permanently deletes the signed-in account and its online data (required by Google Play for
+     * apps with account sign-up). Reports a user-facing error message, or null on success.
+     */
+    fun deleteAccount(password: String, onResult: (String?) -> Unit) {
+        viewModelScope.launch {
+            val dao = database.connectDao()
+            val user = dao.getCurrentUser().first()
+            val error = try {
+                if (cloud != null) {
+                    cloud.deleteAccount(password)
+                    cloud.signOut()
+                } else if (user != null && !withContext(Dispatchers.Default) { PasswordHasher.verify(password, user.password) }) {
+                    onResult("Incorrect password")
+                    return@launch
+                }
+                if (user != null) {
+                    dao.clearCurrentUser()
+                    // Strip credentials so the account can no longer be logged into on this device.
+                    dao.updateUser(user.copy(isCurrentUser = false, email = "", password = ""))
+                }
+                resetOnboarding()
+                null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: FirebaseNetworkException) {
+                "No internet connection. Please try again."
+            } catch (e: FirebaseAuthException) {
+                "Incorrect password"
+            } catch (e: Exception) {
+                android.util.Log.e("ConnectViewModel", "Account deletion failed", e)
+                "Could not delete your account. Please check your connection and try again."
+            }
+            onResult(error)
+        }
+    }
+
     fun getOtherUserStream(userId: Int): Flow<UserEntity?> {
+        cloud?.let { c -> viewModelScope.launch { c.refreshProfile(userId) } }
         return database.connectDao().getUserById(userId)
+    }
+
+    fun getJoinedActivitiesStream(userId: Int): Flow<List<ActivityEntity>> {
+        return repository.getActivitiesJoinedByUser(userId)
     }
 
     fun getCreatedActivitiesStream(userId: Int): Flow<List<ActivityEntity>> {
@@ -447,19 +564,23 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
     }
 
     // --- User Interests & Sync with Firebase ---
-    fun getUserInterestsStream(userId: Int): Flow<List<UserInterest>> {
-        return interestsRepository.syncAndGetInterests(userId.toString())
+    // Interests are stored under the Firebase uid for cloud users, else under the local id.
+    private suspend fun interestsKey(userId: Int): String =
+        database.connectDao().getUserByIdOnce(userId)?.remoteId ?: userId.toString()
+
+    fun getUserInterestsStream(userId: Int): Flow<List<UserInterest>> = flow {
+        emitAll(interestsRepository.syncAndGetInterests(interestsKey(userId)))
     }
 
     fun attachInterest(userId: Int, interestName: String, category: String = "General") {
         viewModelScope.launch {
-            interestsRepository.attachInterestToProfile(userId.toString(), interestName, category)
+            interestsRepository.attachInterestToProfile(interestsKey(userId), interestName, category)
         }
     }
 
     fun detachInterest(userId: Int, interestName: String) {
         viewModelScope.launch {
-            interestsRepository.detachInterestFromProfile(userId.toString(), interestName)
+            interestsRepository.detachInterestFromProfile(interestsKey(userId), interestName)
         }
     }
 
@@ -541,10 +662,13 @@ class ConnectViewModel(application: Application) : AndroidViewModel(application)
 
     fun reportUser(userId: Int, reason: String) {
         _reportedUsers.value = _reportedUsers.value + (userId to reason)
+        cloud?.let { c -> viewModelScope.launch { c.reportUser(userId, reason) } }
     }
 }
 
 private const val MIN_PASSWORD_LENGTH = 8
+
+private const val DEFAULT_AVATAR_URL = "https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?q=80&w=200"
 
 private const val AI_GUIDE_MODEL = "gemini-3.5-flash"
 

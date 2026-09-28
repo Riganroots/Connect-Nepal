@@ -8,6 +8,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.BuildConfig
 import com.example.data.model.*
 import com.example.data.security.PasswordHasher
+import com.google.firebase.FirebaseApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -20,7 +21,7 @@ import kotlinx.coroutines.launch
         MessageEntity::class,
         UserInterest::class
     ],
-    version = 6,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,7 +40,9 @@ abstract class AppDatabase : RoomDatabase() {
                     "connect_database"
                 )
                 .fallbackToDestructiveMigration()
-                .addCallback(ConnectDatabaseCallback(scope))
+                // Sample people and activities are only for offline/demo builds. With Firebase
+                // configured, every activity comes from Firestore so testers never join fake ones.
+                .addCallback(ConnectDatabaseCallback(scope, seedSampleData = FirebaseApp.getApps(context).isEmpty()))
                 .build()
                 INSTANCE = instance
                 instance
@@ -48,11 +51,13 @@ abstract class AppDatabase : RoomDatabase() {
     }
 
     private class ConnectDatabaseCallback(
-        private val scope: CoroutineScope
+        private val scope: CoroutineScope,
+        private val seedSampleData: Boolean
     ) : RoomDatabase.Callback() {
 
         override fun onCreate(db: SupportSQLiteDatabase) {
             super.onCreate(db)
+            if (!seedSampleData) return
             INSTANCE?.let { database ->
                 scope.launch(Dispatchers.IO) {
                     val dao = database.connectDao()

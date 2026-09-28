@@ -1,0 +1,98 @@
+rules_version = '2';
+
+// Security rules for Connect Nepal. Deploy with: firebase deploy --only firestore:rules
+// Data layout is documented in app/src/main/java/com/example/data/repository/CloudRepository.kt.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isSelf(uid) {
+      return signedIn() && request.auth.uid == uid;
+    }
+
+    // True when `field` is absent from the written data, or is a string of at most `max` chars.
+    function optionalString(data, field, max) {
+      return !(field in data) || (data[field] is string && data[field].size() <= max);
+    }
+
+    // --- Public profiles ---
+    match /users/{uid} {
+      allow read: if signedIn();
+      allow create, update: if isSelf(uid)
+        && request.resource.data.keys().hasOnly(['name', 'bio', 'profilePictureUrl', 'city', 'interests', 'createdAt'])
+        && optionalString(request.resource.data, 'name', 80)
+        && optionalString(request.resource.data, 'bio', 500)
+        && optionalString(request.resource.data, 'profilePictureUrl', 500)
+        && optionalString(request.resource.data, 'city', 80)
+        && (!('interests' in request.resource.data) || request.resource.data.interests is list);
+      allow delete: if isSelf(uid);
+
+      match /interests/{interestId} {
+        allow read: if signedIn();
+        allow write: if isSelf(uid);
+      }
+    }
+
+    // --- Activities ---
+    // participants is a map of uid -> {name, avatar}; the organizer is always included on create.
+    match /activities/{activityId} {
+      function validActivity(data) {
+        return data.title is string && data.title.size() > 0 && data.title.size() <= 120
+          && data.description is string && data.description.size() <= 2000
+          && data.maxParticipants is int && data.maxParticipants >= 2 && data.maxParticipants <= 500
+          && data.participants is map
+          && data.participants.size() <= data.maxParticipants;
+      }
+
+      allow read: if signedIn();
+
+      allow create: if signedIn()
+        && request.resource.data.organizerId == request.auth.uid
+        && request.resource.data.participants.keys().hasOnly([request.auth.uid])
+        && request.resource.data.createdAt == request.time
+        && validActivity(request.resource.data);
+
+      allow update: if signedIn() && (
+        // The organizer may edit the activity (but not hand it to someone else).
+        (resource.data.organizerId == request.auth.uid
+          && request.resource.data.organizerId == resource.data.organizerId
+          && request.resource.data.createdAt == resource.data.createdAt
+          && validActivity(request.resource.data))
+        ||
+        // Anyone else may only add or remove themselves as a participant, up to the limit.
+        (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['participants'])
+          && request.resource.data.participants.diff(resource.data.participants).affectedKeys().hasOnly([request.auth.uid])
+          && request.resource.data.participants.size() <= resource.data.maxParticipants)
+      );
+
+      allow delete: if signedIn() && resource.data.organizerId == request.auth.uid;
+
+      // --- Group chat: participants only ---
+      match /messages/{messageId} {
+        function isParticipant() {
+          return request.auth.uid in get(/databases/$(database)/documents/activities/$(activityId)).data.participants;
+        }
+
+        allow read: if signedIn() && isParticipant();
+        allow create: if signedIn() && isParticipant()
+          && request.resource.data.senderId == request.auth.uid
+          && request.resource.data.text is string
+          && request.resource.data.text.size() > 0
+          && request.resource.data.text.size() <= 2000
+          && request.resource.data.timestamp is int;
+        allow update, delete: if false;
+      }
+    }
+
+    // --- Abuse reports: write-only from the app, reviewed in the Firebase console ---
+    match /reports/{reportId} {
+      allow create: if signedIn()
+        && request.resource.data.reporterId == request.auth.uid
+        && request.resource.data.reason is string
+        && request.resource.data.reason.size() <= 2000;
+    }
+  }
+}

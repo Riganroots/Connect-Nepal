@@ -2,26 +2,20 @@ package com.example.data.repository
 
 import com.example.data.database.ConnectDao
 import com.example.data.model.*
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Query
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.firstOrNull
-import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.launch
 
-class ConnectRepository(private val connectDao: ConnectDao) {
-
-    private val firestore: FirebaseFirestore? by lazy {
-        try {
-            FirebaseFirestore.getInstance()
-        } catch (e: Exception) {
-            android.util.Log.e("ConnectRepository", "Failed to initialize Firestore: ${e.message}")
-            null
-        }
-    }
+/**
+ * App data access. Reads always come from Room. When [cloud] is available (Firebase configured
+ * and the user signed in with Firebase Auth), activities, participants and chats for
+ * Firestore-backed activities go through it; everything else stays local.
+ */
+class ConnectRepository(
+    private val connectDao: ConnectDao,
+    private val cloud: CloudRepository? = null
+) {
 
     val currentUser: Flow<UserEntity?> = connectDao.getCurrentUser()
 
@@ -38,60 +32,30 @@ class ConnectRepository(private val connectDao: ConnectDao) {
     fun getJoinedActivities(): Flow<List<ActivityEntity>> = 
         connectDao.getJoinedActivities()
 
+    fun getActivitiesJoinedByUser(userId: Int): Flow<List<ActivityEntity>> =
+        connectDao.getActivitiesJoinedByUser(userId)
+
     fun getActivityById(id: Int): Flow<ActivityEntity?> = 
         connectDao.getActivityById(id)
 
     fun getParticipantsByActivity(activityId: Int): Flow<List<ParticipantEntity>> = 
         connectDao.getParticipantsByActivity(activityId)
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    fun getMessagesByActivity(activityId: Int): Flow<List<MessageEntity>> {
-        val localFlow = connectDao.getMessagesByActivity(activityId)
-        val db = firestore ?: return localFlow
+    /** Local messages, plus a live Firestore sync while collected for cloud-backed activities. */
+    fun getMessagesByActivity(activityId: Int): Flow<List<MessageEntity>> = channelFlow {
+        val remoteId = connectDao.getActivityByIdOnce(activityId)?.remoteId
+        if (cloud != null && remoteId != null) {
+            launch { cloud.syncMessages(remoteId, activityId) }
+        }
+        connectDao.getMessagesByActivity(activityId).collect { send(it) }
+    }
 
-        return callbackFlow<Unit> {
-            val listenerRegistration = db.collection("messages")
-                .whereEqualTo("activityId", activityId)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) {
-                        android.util.Log.e("ConnectRepository", "Firestore listener error: ${error.message}")
-                        return@addSnapshotListener
-                    }
-                    if (snapshot != null) {
-                        launch {
-                            for (doc in snapshot.documents) {
-                                try {
-                                    val msgId = doc.getLong("id")?.toInt() ?: continue
-                                    val actId = doc.getLong("activityId")?.toInt() ?: activityId
-                                    val sendId = doc.getLong("senderId")?.toInt() ?: 0
-                                    val sendName = doc.getString("senderName") ?: ""
-                                    val sendAvatar = doc.getString("senderAvatar") ?: ""
-                                    val msgText = doc.getString("text") ?: ""
-                                    val ts = doc.getLong("timestamp") ?: System.currentTimeMillis()
-
-                                    val message = MessageEntity(
-                                        id = msgId,
-                                        activityId = actId,
-                                        senderId = sendId,
-                                        senderName = sendName,
-                                        senderAvatar = sendAvatar,
-                                        text = msgText,
-                                        timestamp = ts
-                                    )
-                                    connectDao.insertMessage(message)
-                                } catch (e: Exception) {
-                                    android.util.Log.e("ConnectRepository", "Mapping error: ${e.message}")
-                                }
-                            }
-                            trySend(Unit)
-                        }
-                    }
-                }
-            awaitClose {
-                listenerRegistration.remove()
-            }
-        }.flatMapLatest {
-            localFlow
+    /** Creates an activity, in Firestore when signed in to the cloud, otherwise locally. */
+    suspend fun createActivity(activity: ActivityEntity, organizer: UserEntity) {
+        if (cloud != null && organizer.remoteId != null) {
+            cloud.createActivity(activity, organizer)
+        } else {
+            insertActivity(activity)
         }
     }
 
@@ -103,7 +67,7 @@ class ConnectRepository(private val connectDao: ConnectDao) {
                 activityId = id.toInt(),
                 userId = activity.organizerId,
                 userName = activity.organizerName,
-                userAvatar = activity.coverImageUrl // Or organizer avatar
+                userAvatar = activity.organizerAvatar
             )
         )
         return id
@@ -120,9 +84,16 @@ class ConnectRepository(private val connectDao: ConnectDao) {
         }
     }
 
-    suspend fun joinActivity(activityId: Int, userId: Int, userName: String, userAvatar: String) {
+    suspend fun joinActivity(activityId: Int, user: UserEntity) {
         val activity = connectDao.getActivityById(activityId).firstOrNull()
         if (activity != null && !activity.isJoined) {
+            if (cloud != null && activity.remoteId != null) {
+                cloud.joinActivity(activity.remoteId, activityId, user)
+                return
+            }
+            val userId = user.id
+            val userName = user.name
+            val userAvatar = user.profilePictureUrl
             val updated = activity.copy(
                 isJoined = true,
                 participantCount = activity.participantCount + 1
@@ -147,9 +118,14 @@ class ConnectRepository(private val connectDao: ConnectDao) {
         }
     }
 
-    suspend fun leaveActivity(activityId: Int, userId: Int) {
+    suspend fun leaveActivity(activityId: Int, user: UserEntity) {
         val activity = connectDao.getActivityById(activityId).firstOrNull()
         if (activity != null && activity.isJoined) {
+            if (cloud != null && activity.remoteId != null) {
+                cloud.leaveActivity(activity.remoteId, activityId, user)
+                return
+            }
+            val userId = user.id
             val updated = activity.copy(
                 isJoined = false,
                 participantCount = (activity.participantCount - 1).coerceAtLeast(1)
@@ -168,40 +144,25 @@ class ConnectRepository(private val connectDao: ConnectDao) {
     }
 
     suspend fun sendMessage(activityId: Int, senderId: Int, senderName: String, senderAvatar: String, text: String) {
-        val uniqueId = (System.currentTimeMillis() % Int.MAX_VALUE).toInt()
-        val timestamp = System.currentTimeMillis()
-
-        val message = MessageEntity(
-            id = uniqueId,
-            activityId = activityId,
-            senderId = senderId,
-            senderName = senderName,
-            senderAvatar = senderAvatar,
-            text = text,
-            timestamp = timestamp
+        connectDao.insertMessage(
+            MessageEntity(
+                activityId = activityId,
+                senderId = senderId,
+                senderName = senderName,
+                senderAvatar = senderAvatar,
+                text = text
+            )
         )
+    }
 
-        connectDao.insertMessage(message)
-
-        val db = firestore
-        if (db != null) {
-            try {
-                val data = hashMapOf(
-                    "id" to uniqueId,
-                    "activityId" to activityId,
-                    "senderId" to senderId,
-                    "senderName" to senderName,
-                    "senderAvatar" to senderAvatar,
-                    "text" to text,
-                    "timestamp" to timestamp
-                )
-                db.collection("messages")
-                    .document(uniqueId.toString())
-                    .set(data)
-            } catch (e: Exception) {
-                android.util.Log.e("ConnectRepository", "Error sending message to Firestore: ${e.message}")
-            }
+    /** Sends a chat message as [sender]; cloud activities only accept messages from participants. */
+    suspend fun sendMessage(activityId: Int, sender: UserEntity, text: String) {
+        val activity = connectDao.getActivityByIdOnce(activityId) ?: return
+        if (cloud != null && activity.remoteId != null) {
+            if (activity.isJoined) cloud.sendMessage(activity.remoteId, activityId, sender, text)
+            return
         }
+        sendMessage(activityId, sender.id, sender.name, sender.profilePictureUrl, text)
     }
 
     fun searchActivities(query: String, city: String): Flow<List<ActivityEntity>> = 
@@ -209,5 +170,6 @@ class ConnectRepository(private val connectDao: ConnectDao) {
 
     suspend fun updateUser(user: UserEntity) {
         connectDao.updateUser(user)
+        cloud?.updateProfile(user)
     }
 }
