@@ -21,6 +21,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -51,6 +52,84 @@ fun SettingsScreen(
     var languageMenuExpanded by remember { mutableStateOf(false) }
 
     val languages = listOf("English", "Nepali", "Newari", "Sherpa")
+
+    var showDeleteDialog by remember { mutableStateOf(false) }
+    var deletePassword by remember { mutableStateOf("") }
+    var deleteError by remember { mutableStateOf<String?>(null) }
+    var isDeleting by remember { mutableStateOf(false) }
+
+    if (showDeleteDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                if (!isDeleting) {
+                    showDeleteDialog = false
+                    deletePassword = ""
+                    deleteError = null
+                }
+            },
+            icon = { Icon(Icons.Default.DeleteForever, contentDescription = null) },
+            title = { Text("Delete your account?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(
+                        "This permanently deletes your profile, the activities you organise, and removes you " +
+                            "from activities you joined. This cannot be undone."
+                    )
+                    OutlinedTextField(
+                        value = deletePassword,
+                        onValueChange = { deletePassword = it },
+                        label = { Text("Confirm your password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        isError = deleteError != null,
+                        supportingText = if (deleteError != null) {
+                            { Text(deleteError.orEmpty()) }
+                        } else {
+                            null
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("delete_account_password_input")
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        isDeleting = true
+                        deleteError = null
+                        viewModel.deleteAccount(deletePassword) { error ->
+                            isDeleting = false
+                            if (error == null) {
+                                showDeleteDialog = false
+                                deletePassword = ""
+                                onLogout()
+                                Toast.makeText(context, "Your account has been deleted.", Toast.LENGTH_LONG).show()
+                            } else {
+                                deleteError = error
+                            }
+                        }
+                    },
+                    enabled = deletePassword.isNotBlank() && !isDeleting,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text(if (isDeleting) "Deleting…" else "Delete")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteDialog = false
+                        deletePassword = ""
+                        deleteError = null
+                    },
+                    enabled = !isDeleting
+                ) {
+                    Text("Cancel")
+                }
+            }
+        )
+    }
 
     Scaffold(
         topBar = {
@@ -412,6 +491,19 @@ fun SettingsScreen(
                 Icon(Icons.Default.ExitToApp, contentDescription = "Logout")
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Logout", fontWeight = FontWeight.Black)
+            }
+
+            // Delete Account (Google Play requires in-app deletion for apps with sign-up)
+            TextButton(
+                onClick = { showDeleteDialog = true },
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("delete_account_button")
+            ) {
+                Icon(Icons.Default.DeleteForever, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Delete Account", fontWeight = FontWeight.Bold)
             }
 
             Spacer(modifier = Modifier.height(30.dp))

@@ -1,9 +1,13 @@
 package com.example.data.model
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "users")
+// `remoteId` links a cached row to its Firestore document (a Firebase Auth uid for users).
+// It is null for sample data and for accounts created while Firebase is not configured.
+
+@Entity(tableName = "users", indices = [Index(value = ["remoteId"], unique = true)])
 data class UserEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val name: String,
@@ -15,10 +19,11 @@ data class UserEntity(
     val followingCount: Int,
     val isCurrentUser: Boolean = false,
     val email: String = "",
-    val password: String = "" // PBKDF2 hash from PasswordHasher, never plaintext
+    val password: String = "", // PBKDF2 hash from PasswordHasher, never plaintext
+    val remoteId: String? = null
 )
 
-@Entity(tableName = "activities")
+@Entity(tableName = "activities", indices = [Index(value = ["remoteId"], unique = true)])
 data class ActivityEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val title: String,
@@ -43,7 +48,8 @@ data class ActivityEntity(
     val createdAt: Long = System.currentTimeMillis(),
     val participantCount: Int = 1,
     val isSaved: Boolean = false,
-    val isJoined: Boolean = false
+    val isJoined: Boolean = false,
+    val remoteId: String? = null
 )
 
 @Entity(tableName = "activity_participants")
@@ -55,7 +61,7 @@ data class ParticipantEntity(
     val userAvatar: String
 )
 
-@Entity(tableName = "messages")
+@Entity(tableName = "messages", indices = [Index(value = ["remoteId"], unique = true)])
 data class MessageEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val activityId: Int,
@@ -63,5 +69,6 @@ data class MessageEntity(
     val senderName: String,
     val senderAvatar: String,
     val text: String,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    val remoteId: String? = null
 )

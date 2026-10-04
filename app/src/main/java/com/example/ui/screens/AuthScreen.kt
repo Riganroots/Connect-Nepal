@@ -315,8 +315,9 @@ fun AuthScreen(
                             }
                         }
 
-                        // Demo account fast access (debug builds only; demo accounts are locked in release)
-                        if (BuildConfig.DEBUG) {
+                        // Demo account fast access: debug builds without Firebase only (the sample
+                        // accounts are locked in release and not seeded when Firebase is configured)
+                        if (BuildConfig.DEBUG && !viewModel.isCloudEnabled) {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
                                 text = "Or quick login with a demo account:",

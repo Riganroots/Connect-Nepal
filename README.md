@@ -42,14 +42,39 @@ The repository includes the Gradle 9.3.1 wrapper. A custom debug keystore is not
 
 Do not place private server credentials, service-account keys, signing keys, or production secrets in the repository or Android APK.
 
-Firebase-dependent functionality (group chat sync, interest sync, and the AI Local Guide) needs a Firebase project with an Android app registered for `com.connectnepal.app`. Download its `google-services.json` into `app/`. The build allows that file to be absent so CI can validate the project; without it these features stay local-only or show an "unavailable" message.
+The app has two modes, chosen automatically at startup:
 
-The AI Local Guide calls Gemini through [Firebase AI Logic](https://firebase.google.com/docs/ai-logic), so no Gemini API key is compiled into the app. Enable AI Logic (Gemini Developer API) in the Firebase console, and turn on App Check before a public release.
+- **Online (Firebase configured):** accounts use Firebase Auth, and profiles, activities, participants and group chats are shared through Firestore. Room is used as the local cache. No sample content is seeded.
+- **Offline demo (no `google-services.json`):** everything is stored on the device and sample people and activities are seeded. CI and the unit tests run in this mode.
+
+### Firebase setup
+
+1. In the Firebase console, register an Android app with package name `com.connectnepal.app` and put its `google-services.json` in `app/`.
+2. **Authentication → Sign-in method:** enable **Email/Password**.
+3. **Firestore Database:** create the database, then deploy the security rules from this repo:
+   ```sh
+   npm install -g firebase-tools
+   firebase login
+   firebase use --add            # pick your project
+   firebase deploy --only firestore:rules
+   ```
+4. **AI Logic:** enable the Gemini Developer API for the AI Local Guide. It calls Gemini through [Firebase AI Logic](https://firebase.google.com/docs/ai-logic), so no Gemini API key is compiled into the app.
+5. Before a public release, turn on App Check.
+
+Firestore layout (enforced by `firestore.rules`):
+
+| Path | Contents | Who can write |
+| --- | --- | --- |
+| `users/{uid}` | public profile and interests | that user |
+| `activities/{id}` | activity details, `organizerId`, `participants` map | organizer; others may only add/remove themselves |
+| `activities/{id}/messages/{id}` | group chat | participants only (also the only readers) |
+| `reports/{id}` | abuse reports | any signed-in user (create only); review them in the console |
 
 ## Beta build settings
 
-- Debug builds seed sample accounts you can log into with the demo button (password `password123`). Release builds keep the sample content but lock those accounts, hide the demo login, and hide the developer map/OAuth settings.
-- Passwords are stored as salted PBKDF2 hashes.
+- Debug builds without Firebase seed sample accounts you can log into with the demo button (password `password123`). Release builds hide the demo login and the developer map/OAuth settings.
+- Settings has **Delete Account**, which removes the user's profile, the activities they organise, and their place in activities they joined. Google Play requires in-app account deletion for apps with sign-up.
+- Offline-mode passwords are stored as salted PBKDF2 hashes; online mode uses Firebase Auth.
 - Set `connect.feedbackEmail` in `gradle.properties` (or pass `-Pconnect.feedbackEmail=...`) to show a "Send Beta Feedback" button in Settings.
 - Bump `versionCode` in `app/build.gradle.kts` for every upload to Google Play.
 

@@ -26,6 +26,15 @@ interface ConnectDao {
     @Update
     suspend fun updateUser(user: UserEntity)
 
+    @Query("SELECT * FROM users WHERE id = :id")
+    suspend fun getUserByIdOnce(id: Int): UserEntity?
+
+    @Query("SELECT * FROM users WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun getUserByRemoteId(remoteId: String): UserEntity?
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertUserIfAbsent(user: UserEntity): Long
+
     @Query("SELECT * FROM users WHERE isCurrentUser = 0")
     fun getAllUsers(): Flow<List<UserEntity>>
 
@@ -48,6 +57,26 @@ interface ConnectDao {
 
     @Query("SELECT * FROM activities WHERE id = :id")
     fun getActivityById(id: Int): Flow<ActivityEntity?>
+
+    @Query("SELECT * FROM activities WHERE id = :id")
+    suspend fun getActivityByIdOnce(id: Int): ActivityEntity?
+
+    @Query("SELECT * FROM activities WHERE remoteId = :remoteId LIMIT 1")
+    suspend fun getActivityByRemoteId(remoteId: String): ActivityEntity?
+
+    @Query("SELECT remoteId FROM activities WHERE remoteId IS NOT NULL")
+    suspend fun getRemoteActivityIds(): List<String>
+
+    @Query("DELETE FROM activities WHERE remoteId = :remoteId")
+    suspend fun deleteActivityByRemoteId(remoteId: String)
+
+    @Query("""
+        SELECT a.* FROM activities a
+        INNER JOIN activity_participants p ON p.activityId = a.id
+        WHERE p.userId = :userId
+        ORDER BY a.createdAt DESC
+    """)
+    fun getActivitiesJoinedByUser(userId: Int): Flow<List<ActivityEntity>>
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertActivity(activity: ActivityEntity): Long
@@ -74,8 +103,14 @@ interface ConnectDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertParticipant(participant: ParticipantEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertParticipants(participants: List<ParticipantEntity>)
+
     @Query("DELETE FROM activity_participants WHERE activityId = :activityId AND userId = :userId")
     suspend fun deleteParticipant(activityId: Int, userId: Int)
+
+    @Query("DELETE FROM activity_participants WHERE activityId = :activityId")
+    suspend fun deleteParticipantsForActivity(activityId: Int)
 
 
     // --- Messages ---
@@ -84,6 +119,9 @@ interface ConnectDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMessage(message: MessageEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertMessageIfAbsent(message: MessageEntity)
 
     // --- User Interests ---
     @Query("SELECT * FROM user_interests WHERE userId = :userId")

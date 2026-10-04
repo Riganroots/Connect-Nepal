@@ -30,7 +30,6 @@ import coil.compose.rememberAsyncImagePainter
 import com.example.data.model.ActivityEntity
 import com.example.data.model.UserEntity
 import com.example.data.model.UserInterest
-import com.example.data.model.MockData
 import com.example.ui.viewmodel.ConnectViewModel
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 
@@ -59,6 +58,8 @@ fun ProfileScreen(
     val createdActivities by createdActivitiesFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     val joinedActivities by viewModel.joinedActivities.collectAsStateWithLifecycle()
+    val otherUserJoinedFlow = remember(userId) { viewModel.getJoinedActivitiesStream(userId) }
+    val otherUserJoined by otherUserJoinedFlow.collectAsStateWithLifecycle(initialValue = emptyList())
 
     var activeTab by remember { mutableStateOf("Joined") } // "Joined" or "Created"
     var isFollowingUser by remember { mutableStateOf(false) }
@@ -359,8 +360,7 @@ fun ProfileScreen(
 
             // List of selected activities
             val listToShow = if (activeTab == "Joined") {
-                // If it's the current user, show actual joined. If another user, filter initialActivities
-                if (isCurrentUser) joinedActivities else MockData.initialActivities.filter { it.organizerId != userId && it.isJoined }
+                if (isCurrentUser) joinedActivities else otherUserJoined.filter { it.organizerId != userId }
             } else {
                 createdActivities
             }
